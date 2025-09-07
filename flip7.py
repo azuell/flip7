@@ -1,17 +1,32 @@
 import random
 from enum import Enum
 
+WINNING_SCORE = 200
+
 class player_state(Enum):
     PLAYING = 1
     FROZEN = 2
     STAYING = 3
-    BUSTED = 4
+    FLIPPED7 = 4
+    BUSTED = 5
 
 class player:
-    def __init__(self, name):
+    def __init__(self, name = None):
         self.name = name
         self.cards = deck()
 
+        self.state = player_state.PLAYING
+
+    def __hash__(self):
+        return hash(str(self))
+    
+    def __eq__(self, other):
+        if not isinstance(other, player):
+            return NotImplemented
+        return str(self) == str(other)
+
+    def new_round(self):
+        self.cards = deck()
         self.state = player_state.PLAYING
 
     def is_playing(self):
@@ -22,12 +37,13 @@ class player:
             card = deck.pickup()
             if (card):
                 print(self.name + " picked up " + card.name)
-                # also move check busting??
                 self.check_bust(card)
-                self.cards.add(card)
-                # check win condition
+                self.cards.add_card(card)
+                self.check_win()
+                return True
             else:
                 print("Failed to pick up a card. The deck is empty")
+                return False
 
     def stay(self):
         self.state = player_state.STAYING
@@ -52,6 +68,10 @@ class player:
             print("Oh no you busted")
             self.state = player_state.BUSTED
             self.round_score = 0
+
+    def check_win(self):
+        if self.state is not player_state.BUSTED and self.cards.unique_number_cards() == 7:
+            self.state = player_state.FLIPPED7
 
     def calculate_round_score(self):
         score = 0
@@ -84,8 +104,7 @@ class player:
                     print(" [R] see your score for this round")
                     #print(" [G] see your overall score for this game")
                 case "H":
-                    self.pickup(deck)
-                    return
+                    return self.pickup(deck)
                 case "S":
                     self.stay()
                     return
@@ -105,11 +124,17 @@ class players:
             self.player_list.append(player(player_name))
 
     def is_remaining_players(self):
-        for player in self.player_list:
-            if player.is_playing():
-                # At least one player is still playing
-                return True
-        return False
+        # Check no one has flipped 7 and someone is still playing
+        return not any(x for x in self.player_list if x.state == player_state.FLIPPED7) \
+            and any(x for x in self.player_list if x.state == player_state.PLAYING)
+
+    
+        # #
+        # for player in self.player_list:
+        #     if player.is_playing():
+        #         # At least one player is still playing
+        #         return True
+        # return False
 
 class card_type(Enum):
     NUMBER = 1
@@ -148,11 +173,12 @@ class card:
     def print(self):
         print(self.name)
 
-# dict to count each cards?
 class deck:
-    def __init__(self):
+    def __init__(self, blank_deck=True):
         self.cards = []
-        
+        if not blank_deck:
+            self.build_deck()
+
     def build_deck(self):
         # Manually add 0 card
         self.cards.append(card(0, card_type.NUMBER))
@@ -168,6 +194,9 @@ class deck:
         
         # Add mulitplier card
         self.cards.append(card(2, card_type.MULTIPLIER))
+        
+        # Finish it all off with a good shuffle
+        self.shuffle()
 
     def print(self):
         for card in self.cards:
@@ -187,8 +216,12 @@ class deck:
         # No cards in deck, pickup failed
         return False
     
-    def add(self, new_card):
+    def add_card(self, new_card):
         self.cards.append(new_card)
+
+    def add_deck(self, new_deck):
+        for new_card in new_deck.cards:
+            self.add_card(new_card)
     
     def has_cards(self):
         return (len(self.cards) > 0)
@@ -228,23 +261,99 @@ class deck:
                 return True
         return False
     
+    def clear_deck(self):
+        self.cards = []
+    
     # number of score cards to try get 7
-    
-    
-new_deck = deck()
-new_deck.build_deck()
-new_deck.shuffle()
 
-new_deck.print()
+class round:
+    def __init__(self, players, deck, discard):
+        self.players = players
+        self.deck = deck
+        self.discard = discard
 
+        self.scores = dict()
+    
+    def round(self):
+        print("New round")
+        self.deck.print()
+
+        # Reset player hands and states
+        for player in self.players.player_list:
+            player.new_round()
+
+        # All players alive
+        while (self.players.is_remaining_players()):
+            for player in self.players.player_list:
+                if player.is_playing():
+                    self.deck.print()
+                    if not self.deck.has_cards():
+                        self.deck = self.discard.shuffle()
+                        self.discard.clear_deck()
+                    player.turn(self.deck)
+
+        # All players dead
+        print("The round is over")
+        self.deck.print()
+        for player in self.players.player_list:
+            self.scores[player] = player.calculate_round_score()
+            player.print_hand()
+            player.print_round_score()
+            self.discard.add_deck(player.cards)
+            
+            
+            
+
+        return self.scores
+    
+    def reset_deck(self):
+        used_cards = []
+
+
+class game:
+    def __init__(self, players):
+        self.players = players
+        
+        self.rounds = []
+        self.deck = deck(blank_deck = False)
+
+        self.discard = deck(blank_deck = True)
+
+        self.scores = dict()
+
+        self.winning_player = None
+
+    def play(self):
+        game_go = True
+        while game_go:
+            game_round = round(self.players, self.deck, self.discard).round()
+            self.rounds.append(game_round)
+            for key_player in self.rounds[-1]:
+                print(key_player)
+                if key_player not in self.scores:
+                    self.scores[key_player] = self.rounds[-1][key_player]
+                else:
+                    self.scores[key_player] += self.rounds[-1][key_player]
+                    if not self.winning_player:
+                        self.winning_player = key_player
+                    
+                    if self.scores[key_player] >= self.scores[self.winning_player]:
+                        self.winning_player = key_player
+                        if self.scores[self.winning_player] > WINNING_SCORE:
+                            print(self.winning_player.name + " is the winner with a score of " + str(self.scores[self.winning_player]))
+                            game_go = False
+
+players_6 = players(["A", "BB", "CCC", "DDDD", "EEEEE", "FFFFFF"])
+players_12 = players(["A", "BB", "CCC", "DDDD", "EEEEE", "FFFFFF", "GGGGGGG", "HHHHHHHH", "IIIIIIIII", "JJJJJJJJJJ", "KKKKKKKKKKK", "LLLLLLLLLLLLL"])
 game_players = players(["Amy", "James"])
 
-# All players alive
-while (game_players.is_remaining_players()):
-    for game_player in game_players.player_list:
-        if game_player.is_playing():
-            game_player.turn(new_deck)
+game(players_6).play()
 
-for game_player in game_players.player_list:
-    game_player.print_hand()
-    game_player.print_round_score()
+
+
+# there is only ever one of each card!!!
+# --> need to update discard alongside busts as they occur
+# --> pop all cards over
+# need to pass discard alongside decks
+# --> mega deck??? - "board" containing deck and discard (and everyone elses hands/states? - will be needed for bot info later on too)
+# --> this will also come in handy later on with the second chance cards that need to be discarded upon use
